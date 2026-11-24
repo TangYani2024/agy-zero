@@ -227,6 +227,20 @@ func TestMetricsLoadsPluginDataAndTracePositionalArg(t *testing.T) {
 		t.Fatalf("expected LoadAll to read plugin_data metrics, got %+v", events)
 	}
 
+	// Verify Record persists directly into existing plugin_data dir when PLUGIN_DATA & AZERO_LOG_FILE are unset
+	metrics.Record(metrics.Event{
+		ID:            "plugin-data-write-1",
+		Command:       "q",
+		Workspace:     "demo",
+		BaselineCalls: 2,
+		ActualCalls:   1,
+		OK:            true,
+	})
+	pdRaw, err := os.ReadFile(pdFile)
+	if err != nil || !strings.Contains(string(pdRaw), "plugin-data-write-1") {
+		t.Fatalf("expected Record to persist into plugin_data file %s, err=%v content=%s", pdFile, err, string(pdRaw))
+	}
+
 	// Verify cmdTrace accepts positional transcript path
 	trFile := filepath.Join(t.TempDir(), "transcript.jsonl")
 	trLine := `{"step_index":1,"type":"PLANNER_RESPONSE","input_tokens":2243,"cache_read_tokens":0,"output_tokens":12}` + "\n"

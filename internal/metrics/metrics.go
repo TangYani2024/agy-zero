@@ -38,6 +38,14 @@ func candidateWritePaths() []string {
 		paths = append(paths, filepath.Join(pd, "metrics.jsonl"))
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		// Prefer existing Antigravity plugin_data dirs (mounted rw even inside the agy Linux sandbox,
+		// so CLI stats persist across reboots and share the same store as SessionStart hooks).
+		for _, appDir := range []string{"antigravity-cli", "antigravity", "antigravity-ide"} {
+			pdRoot := filepath.Join(home, ".gemini", appDir, "plugin_data")
+			if st, err := os.Stat(pdRoot); err == nil && st.IsDir() {
+				paths = append(paths, filepath.Join(pdRoot, "agy-zero", "metrics.jsonl"))
+			}
+		}
 		paths = append(paths, filepath.Join(home, ".gemini", "cache", "agy-zero", "metrics.jsonl"))
 	}
 	paths = append(paths, filepath.Join(os.TempDir(), "agy-zero-metrics.jsonl"))

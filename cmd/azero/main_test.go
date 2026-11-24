@@ -192,3 +192,48 @@ func TestMetricsRecordingAndStats(t *testing.T) {
 		t.Fatalf("unexpected stats output:\n%s", summary)
 	}
 }
+
+func TestMetricsLoadsPluginDataAndTracePositionalArg(t *testing.T) {
+	// Verify LoadAll scans ~/.gemini/antigravity-cli/plugin_data/agy-zero/metrics.jsonl when AZERO_LOG_FILE is unset
+	fakeHome := t.TempDir()
+	t.Setenv("AZERO_LOG_FILE", "")
+	t.Setenv("PLUGIN_DATA", "")
+	t.Setenv("HOME", fakeHome)
+	t.Setenv("USERPROFILE", fakeHome)
+
+	pdFile := filepath.Join(fakeHome, ".gemini", "antigravity-cli", "plugin_data", "agy-zero", "metrics.jsonl")
+	if err := os.MkdirAll(filepath.Dir(pdFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ev := metrics.Event{
+		ID:            "plugin-data-ev-1",
+		Timestamp:     time.Now().Format(time.RFC3339Nano),
+		Command:       "session-skip",
+		Workspace:     "demo",
+		OK:            true,
+	}
+	raw, _ := json.Marshal(ev)
+	if err := os.WriteFile(pdFile, append(raw, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	events, _ := metrics.LoadAll(time.Time{})
+	found := false
+	for _, e := range events {
+		if e.ID == "plugin-data-ev-1" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected LoadAll to read plugin_data metrics, got %+v", events)
+	}
+
+	// Verify cmdTrace accepts positional transcript path
+	trFile := filepath.Join(t.TempDir(), "transcript.jsonl")
+	trLine := `{"step_index":1,"type":"PLANNER_RESPONSE","input_tokens":2243,"cache_read_tokens":0,"output_tokens":12}` + "\n"
+	if err := os.WriteFile(trFile, []byte(trLine), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code := cmdTrace([]string{trFile}); code != 0 {
+		t.Fatalf("expected cmdTrace positional arg exit 0, got %d", code)
+	}
+}

@@ -30,10 +30,10 @@ type Event struct {
 }
 
 func candidateWritePaths() []string {
-	var paths []string
 	if custom := strings.TrimSpace(os.Getenv("AZERO_LOG_FILE")); custom != "" {
-		paths = append(paths, custom)
+		return []string{filepath.Clean(custom)}
 	}
+	var paths []string
 	if pd := strings.TrimSpace(os.Getenv("PLUGIN_DATA")); pd != "" {
 		paths = append(paths, filepath.Join(pd, "metrics.jsonl"))
 	}
@@ -41,6 +41,19 @@ func candidateWritePaths() []string {
 		paths = append(paths, filepath.Join(home, ".gemini", "cache", "agy-zero", "metrics.jsonl"))
 	}
 	paths = append(paths, filepath.Join(os.TempDir(), "agy-zero-metrics.jsonl"))
+	return dedupStrings(paths)
+}
+
+func candidateReadPaths() []string {
+	if custom := strings.TrimSpace(os.Getenv("AZERO_LOG_FILE")); custom != "" {
+		return []string{filepath.Clean(custom)}
+	}
+	paths := candidateWritePaths()
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		for _, appDir := range []string{"antigravity-cli", "antigravity", "antigravity-ide"} {
+			paths = append(paths, filepath.Join(home, ".gemini", appDir, "plugin_data", "agy-zero", "metrics.jsonl"))
+		}
+	}
 	return dedupStrings(paths)
 }
 
@@ -97,7 +110,7 @@ func LoadAll(since time.Time) ([]Event, []string) {
 	var events []Event
 	var usedFiles []string
 
-	for _, p := range candidateWritePaths() {
+	for _, p := range candidateReadPaths() {
 		f, err := os.Open(p)
 		if err != nil {
 			continue
@@ -139,7 +152,7 @@ func LoadAll(since time.Time) ([]Event, []string) {
 // Reset removes all metrics files across candidate paths.
 func Reset() int {
 	removed := 0
-	for _, p := range candidateWritePaths() {
+	for _, p := range candidateReadPaths() {
 		if err := os.Remove(p); err == nil {
 			removed++
 		}

@@ -253,8 +253,12 @@ func cmdTrace(args []string) int {
 	}
 	var targets []string
 	if *filePath != "" {
-		targets = []string{*filePath}
-	} else {
+		targets = append(targets, *filePath)
+	}
+	if len(fs.Args()) > 0 {
+		targets = append(targets, fs.Args()...)
+	}
+	if len(targets) == 0 {
 		found, err := trace.DiscoverTranscripts()
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)

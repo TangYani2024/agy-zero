@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -102,7 +103,11 @@ func TestPatchAtomicAndRollbackAndVerify(t *testing.T) {
 
 	// Valid multi-op patch + create + inline verify
 	goodPatch := "@@@ a.txt\n<<<\noldVal\n===\nnewVal\n>>>\n@@@+ b.txt\nhello\n"
-	out, ok, _ = patch.Run(patch.Options{Cwd: dir, PatchText: goodPatch, VerifyCmd: "grep -q newVal a.txt && echo verified"})
+	verifyCmd := "grep -q newVal a.txt && echo verified"
+	if runtime.GOOS == "windows" {
+		verifyCmd = "findstr /C:newVal a.txt && echo verified"
+	}
+	out, ok, _ = patch.Run(patch.Options{Cwd: dir, PatchText: goodPatch, VerifyCmd: verifyCmd})
 	if !ok || !strings.Contains(out, "Verify [PASS") {
 		t.Fatalf("expected patch+verify pass: ok=%v out=%s", ok, out)
 	}
@@ -114,11 +119,15 @@ func TestPatchAtomicAndRollbackAndVerify(t *testing.T) {
 
 func TestRunnerCompactAndFail(t *testing.T) {
 	dir := t.TempDir()
+	failCmd := "echo noise; echo 'ERROR: boom happened'; exit 1"
+	if runtime.GOOS == "windows" {
+		failCmd = "echo noise & echo ERROR: boom happened & exit /b 1"
+	}
 	out, ok, err := runner.Run(runner.Options{
 		Cwd: dir,
 		Commands: []runner.CommandSpec{
 			{Name: "ok-cmd", Command: "echo all 12 tests passed"},
-			{Name: "fail-cmd", Command: "echo noise; echo 'ERROR: boom happened'; exit 1"},
+			{Name: "fail-cmd", Command: failCmd},
 		},
 		MaxBytes: 4000,
 	})
@@ -130,8 +139,9 @@ func TestRunnerCompactAndFail(t *testing.T) {
 func TestSessionStartConditionalGate(t *testing.T) {
 	// Empty non-repo dir -> must emit {} (0 token overhead)
 	nonRepo := t.TempDir()
+	nonRepoJSON, _ := json.Marshal(map[string]string{"cwd": nonRepo})
 	var buf bytes.Buffer
-	hook.RunSessionStart(strings.NewReader(`{"cwd":"`+nonRepo+`"}`), &buf)
+	hook.RunSessionStart(bytes.NewReader(nonRepoJSON), &buf)
 	if strings.TrimSpace(buf.String()) != "{}" {
 		t.Fatalf("expected {} for non-repo dir, got %q", buf.String())
 	}
@@ -139,8 +149,9 @@ func TestSessionStartConditionalGate(t *testing.T) {
 	// Repo dir with go.mod -> emits compact <=1200B injectSteps snapshot
 	repo := t.TempDir()
 	_ = os.WriteFile(filepath.Join(repo, "go.mod"), []byte("module example.com/demo\n"), 0o644)
+	repoJSON, _ := json.Marshal(map[string]string{"cwd": repo})
 	buf.Reset()
-	hook.RunSessionStart(strings.NewReader(`{"cwd":"`+repo+`"}`), &buf)
+	hook.RunSessionStart(bytes.NewReader(repoJSON), &buf)
 	var parsed map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &parsed); err != nil {
 		t.Fatalf("invalid hook JSON: %v %s", err, buf.String())

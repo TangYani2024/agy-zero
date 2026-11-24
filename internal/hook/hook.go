@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -46,15 +47,34 @@ var repoMarkers = []string{
 	"pom.xml", "build.gradle", "build.gradle.kts", "Makefile", "CMakeLists.txt",
 }
 
+func normComparePath(p string) string {
+	c := filepath.Clean(p)
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.ToLower(c)
+	}
+	return c
+}
+
 func isHomeOrSystemRoot(dir string) bool {
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return true
 	}
-	if abs == "/" || abs == "/home" || abs == "/Users" {
+	// Filesystem / drive root (e.g. "/", "C:\", "\\server\share")
+	if filepath.Dir(abs) == abs {
 		return true
 	}
-	if home, err := os.UserHomeDir(); err == nil && filepath.Clean(home) == filepath.Clean(abs) {
+	lowSlash := strings.TrimRight(strings.ToLower(filepath.ToSlash(abs)), "/")
+	if lowSlash == "/home" || lowSlash == "/users" || strings.HasSuffix(lowSlash, ":/users") || strings.HasSuffix(lowSlash, ":/documents and settings") {
+		return true
+	}
+	normAbs := normComparePath(abs)
+	for _, cand := range []string{os.Getenv("HOME"), os.Getenv("USERPROFILE")} {
+		if cand != "" && normComparePath(cand) == normAbs {
+			return true
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" && normComparePath(home) == normAbs {
 		return true
 	}
 	return false

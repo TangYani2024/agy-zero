@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"agy-zero/internal/budget"
@@ -71,9 +70,7 @@ func ExecShell(cwd, command string, timeout time.Duration) ExecResult {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	cmd := exec.Command("sh", "-c", command)
-	cmd.Dir = cwd
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd := newShellCmd(cwd, command)
 	var outBuf, errBuf cappedBuffer
 	cmd.Stdout = &outBuf
 	cmd.Stderr = &errBuf
@@ -95,15 +92,7 @@ func ExecShell(cwd, command string, timeout time.Duration) ExecResult {
 	case waitErr = <-done:
 	case <-ctx.Done():
 		timedOut = true
-		if cmd.Process != nil {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-			select {
-			case waitErr = <-done:
-			case <-time.After(400 * time.Millisecond):
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-				waitErr = <-done
-			}
-		}
+		waitErr = killProcessTree(cmd, done)
 	}
 
 	exitCode := 0

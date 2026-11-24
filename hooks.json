@@ -1,0 +1,11 @@
+{
+  "agy-zero-snapshot": {
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "./bin/azero hook session-start",
+        "timeout": 5
+      }
+    ]
+  }
+}

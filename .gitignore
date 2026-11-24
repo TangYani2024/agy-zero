@@ -1,0 +1,5 @@
+*.azero-tmp-*
+.DS_Store
+Thumbs.db
+*.log
+metrics.jsonl

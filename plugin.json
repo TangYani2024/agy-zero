@@ -1,0 +1,23 @@
+{
+  "name": "agy-zero",
+  "displayName": "agy-zero",
+  "version": "0.1.0",
+  "logo": "assets/logo.svg",
+  "author": {
+    "name": "TangYani2024",
+    "url": "https://github.com/TangYani2024"
+  },
+  "homepage": "https://github.com/TangYani2024/agy-zero",
+  "repository": "https://github.com/TangYani2024/agy-zero",
+  "license": "MIT",
+  "description": "Zero-MCP, zero-bloat, update-proof Antigravity CLI accelerator: single-binary batched search, Go AST & multi-lang outlines, heredoc atomic patching, concurrent checks, conditional SessionStart snapshot, and local transcript X-ray.",
+  "keywords": [
+    "antigravity",
+    "zero-mcp",
+    "cli-first",
+    "performance",
+    "batch",
+    "patch",
+    "outline"
+  ]
+}

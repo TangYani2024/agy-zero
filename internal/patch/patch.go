@@ -58,14 +58,24 @@ func Parse(raw string) ([]FileSpec, error) {
 
 	var specs []FileSpec
 	idxByKey := map[string]int{}
+	createdPaths := map[string]bool{}
 
-	addHunk := func(path string, h Hunk) {
-		if idx, ok := idxByKey[path]; ok {
-			specs[idx].Hunks = append(specs[idx].Hunks, h)
-			return
+	normKey := func(p string) string {
+		return filepath.ToSlash(filepath.Clean(p))
+	}
+
+	addHunk := func(path string, h Hunk) error {
+		k := normKey(path)
+		if createdPaths[k] {
+			return fmt.Errorf("file %s: cannot combine @@@+ / @@@! with @@@ hunks in one patch", path)
 		}
-		idxByKey[path] = len(specs)
+		if idx, ok := idxByKey[k]; ok {
+			specs[idx].Hunks = append(specs[idx].Hunks, h)
+			return nil
+		}
+		idxByKey[k] = len(specs)
 		specs = append(specs, FileSpec{Path: path, Hunks: []Hunk{h}})
+		return nil
 	}
 
 	i := 0
@@ -81,6 +91,13 @@ func Parse(raw string) ([]FileSpec, error) {
 			if p == "" {
 				return nil, fmt.Errorf("line %d: empty file path after %s", i+1, line[:4])
 			}
+			k := normKey(p)
+			if createdPaths[k] {
+				return nil, fmt.Errorf("line %d: duplicate create/overwrite entry for %s", i+1, p)
+			}
+			if _, hasHunks := idxByKey[k]; hasHunks {
+				return nil, fmt.Errorf("line %d: file %s cannot combine @@@ hunks with @@@+ / @@@!", i+1, p)
+			}
 			i++
 			start := i
 			for i < len(lines) && !strings.HasPrefix(lines[i], "@@@ ") && !strings.HasPrefix(lines[i], "@@@+ ") && !strings.HasPrefix(lines[i], "@@@! ") {
@@ -92,6 +109,7 @@ func Parse(raw string) ([]FileSpec, error) {
 				content = strings.Join(lines[start:i-1], "\n") + "\n"
 			}
 			c := content
+			createdPaths[k] = true
 			specs = append(specs, FileSpec{Path: p, Create: &c, Overwrite: overwrite})
 			continue
 		}
@@ -111,12 +129,12 @@ func Parse(raw string) ([]FileSpec, error) {
 				if strings.HasPrefix(lines[i], "@@@ ") || strings.HasPrefix(lines[i], "@@@+ ") || strings.HasPrefix(lines[i], "@@@! ") {
 					break
 				}
-				if strings.TrimSpace(lines[i]) != "<<<" {
+				if lines[i] != "<<<" {
 					return nil, fmt.Errorf("line %d: expected '<<<' to start hunk for %s (got %q)", i+1, filePath, lines[i])
 				}
 				i++
 				tStart := i
-				for i < len(lines) && strings.TrimSpace(lines[i]) != "===" {
+				for i < len(lines) && lines[i] != "===" {
 					i++
 				}
 				if i >= len(lines) {
@@ -125,7 +143,7 @@ func Parse(raw string) ([]FileSpec, error) {
 				target := strings.Join(lines[tStart:i], "\n")
 				i++
 				rStart := i
-				for i < len(lines) && strings.TrimSpace(lines[i]) != ">>>" {
+				for i < len(lines) && lines[i] != ">>>" {
 					i++
 				}
 				if i >= len(lines) {
@@ -133,12 +151,14 @@ func Parse(raw string) ([]FileSpec, error) {
 				}
 				repl := strings.Join(lines[rStart:i], "\n")
 				i++
-				addHunk(filePath, Hunk{
+				if err := addHunk(filePath, Hunk{
 					Target:      target,
 					Replacement: repl,
 					StartLine:   sLine,
 					EndLine:     eLine,
-				})
+				}); err != nil {
+					return nil, err
+				}
 				foundAny = true
 			}
 			if !foundAny {

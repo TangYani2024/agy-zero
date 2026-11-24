@@ -117,10 +117,15 @@ func ExecShell(cwd, command string, timeout time.Duration) ExecResult {
 	}
 }
 
+var knownLowerEnvVars = map[string]bool{
+	"http_proxy": true, "https_proxy": true, "no_proxy": true, "all_proxy": true, "ftp_proxy": true,
+}
+
 func ParseCommandArg(raw string, idx int) CommandSpec {
 	raw = strings.TrimSpace(raw)
 	if eq := strings.IndexByte(raw, '='); eq > 0 && eq <= 24 {
 		label := raw[:eq]
+		rhs := strings.TrimSpace(raw[eq+1:])
 		validLabel := true
 		for i := 0; i < len(label); i++ {
 			c := label[i]
@@ -129,8 +134,8 @@ func ParseCommandArg(raw string, idx int) CommandSpec {
 				break
 			}
 		}
-		if validLabel && strings.TrimSpace(raw[eq+1:]) != "" {
-			// Guard against leading ENV=VAL commands like FOO=bar cmd
+		if validLabel && rhs != "" && !knownLowerEnvVars[strings.ToLower(label)] {
+			// Guard against leading ENV=VAL commands like FOO=bar cmd or debug=1 npm test
 			isAllUpper := true
 			for i := 0; i < len(label); i++ {
 				if label[i] >= 'a' && label[i] <= 'z' {
@@ -138,8 +143,15 @@ func ParseCommandArg(raw string, idx int) CommandSpec {
 					break
 				}
 			}
-			if !isAllUpper {
-				return CommandSpec{Name: label, Command: strings.TrimSpace(raw[eq+1:])}
+			looksLikeEnvValCmd := false
+			if fields := strings.Fields(rhs); len(fields) >= 2 {
+				v0 := fields[0]
+				if strings.Contains(v0, "://") || v0 == "0" || v0 == "1" || v0 == "true" || v0 == "false" {
+					looksLikeEnvValCmd = true
+				}
+			}
+			if !isAllUpper && !looksLikeEnvValCmd {
+				return CommandSpec{Name: label, Command: rhs}
 			}
 		}
 	}

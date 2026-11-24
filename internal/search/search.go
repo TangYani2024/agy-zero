@@ -122,6 +122,7 @@ func Run(opts Options) (string, error) {
 
 	wallStart := time.Now()
 	sections := make([]string, len(opts.Queries))
+	hasErr := make([]bool, len(opts.Queries))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 6)
 	for i, q := range opts.Queries {
@@ -130,11 +131,20 @@ func Run(opts Options) (string, error) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			sections[idx] = runSingle(absCwd, idx+1, query)
+			sec, ok := runSingle(absCwd, idx+1, query)
+			sections[idx] = sec
+			hasErr[idx] = !ok
 		}(i, q)
 	}
 	wg.Wait()
 
+	allOK := true
+	for _, e := range hasErr {
+		if e {
+			allOK = false
+			break
+		}
+	}
 	rawJoined := strings.Join(sections, "\n\n")
 	out := budget.FitSections(sections, maxBytes, "\n\n", false)
 	spills := 0
@@ -152,12 +162,12 @@ func Run(opts Options) (string, error) {
 		SpillsAvoided: spills,
 		EstTurnsSaved: spills + max(0, (len(opts.Queries)-1)/2),
 		WallMs:        time.Since(wallStart).Milliseconds(),
-		OK:            true,
+		OK:            allOK,
 	})
 	return out, nil
 }
 
-func runSingle(baseCwd string, num int, q Query) string {
+func runSingle(baseCwd string, num int, q Query) (string, bool) {
 	root := baseCwd
 	if q.SubPath != "" {
 		if filepath.IsAbs(q.SubPath) {
@@ -181,32 +191,32 @@ func runSingle(baseCwd string, num int, q Query) string {
 	case QueryGit:
 		out, err := runGit(root, q.Pattern)
 		if err != nil {
-			return header + "\nERROR: " + err.Error()
+			return header + "\nERROR: " + err.Error(), false
 		}
 		if strings.TrimSpace(out) == "" {
-			return header + "\n(no output)"
+			return header + "\n(no output)", true
 		}
-		return header + "\n" + strings.TrimRight(out, "\n")
+		return header + "\n" + strings.TrimRight(out, "\n"), true
 	case QueryGlob:
 		out, err := runGlob(baseCwd, root, q)
 		if err != nil {
-			return header + "\nERROR: " + err.Error()
+			return header + "\nERROR: " + err.Error(), false
 		}
-		return header + "\n" + out
+		return header + "\n" + out, true
 	case QueryFuzzy:
 		out, err := runFuzzy(baseCwd, root, q)
 		if err != nil {
-			return header + "\nERROR: " + err.Error()
+			return header + "\nERROR: " + err.Error(), false
 		}
-		return header + "\n" + out
+		return header + "\n" + out, true
 	case QueryText, QueryRegex:
 		out, err := runContentSearch(baseCwd, root, q)
 		if err != nil {
-			return header + "\nERROR: " + err.Error()
+			return header + "\nERROR: " + err.Error(), false
 		}
-		return header + "\n" + out
+		return header + "\n" + out, true
 	default:
-		return header + "\nERROR: unsupported query type"
+		return header + "\nERROR: unsupported query type", false
 	}
 }
 
@@ -234,13 +244,14 @@ func walkRepoFiles(root string, exts []string, maxFiles int) ([]string, bool, er
 		name := d.Name()
 		if d.IsDir() {
 			if p != root {
-				if DefaultIgnoreDirs[name] || (strings.HasPrefix(name, ".") && name != ".agents") {
+				allowedDotDir := name == ".github" || name == ".vscode" || name == ".agents" || name == ".agent" || name == ".circleci" || name == ".devcontainer" || name == ".husky"
+				if DefaultIgnoreDirs[name] || (strings.HasPrefix(name, ".") && !allowedDotDir) {
 					return filepath.SkipDir
 				}
 			}
 			return nil
 		}
-		if strings.HasPrefix(name, ".") {
+		if name == ".DS_Store" {
 			return nil
 		}
 		if len(extSet) > 0 && !extSet[strings.ToLower(filepath.Ext(name))] {
@@ -660,7 +671,7 @@ func ValidateReadonlyGitArgs(pattern string) ([]string, error) {
 	case "branch":
 		listMode := false
 		for _, arg := range rest {
-			if arg == "--list" || arg == "-l" || arg == "--show-current" || arg == "-a" || arg == "--all" || arg == "-r" || arg == "--remotes" || arg == "-v" || arg == "--verbose" {
+			if arg == "--list" || arg == "-l" || arg == "--show-current" || arg == "-a" || arg == "--all" || arg == "-r" || arg == "--remotes" || arg == "-v" || arg == "-vv" || arg == "--verbose" {
 				if arg == "--list" || arg == "-l" {
 					listMode = true
 				}
@@ -688,12 +699,44 @@ func ValidateReadonlyGitArgs(pattern string) ([]string, error) {
 			}
 		}
 	case "remote":
-		for _, arg := range rest {
-			if arg != "-v" && arg != "--verbose" && arg != "show" && arg != "get-url" && arg != "-n" && arg != "--push" && arg != "--all" {
-				if strings.HasPrefix(arg, "-") || strings.ContainsAny(arg, ":/\\") {
-					return nil, fmt.Errorf("arg %q not allowed in read-only git remote", arg)
-				}
+		if len(rest) == 0 {
+			break
+		}
+		switch rest[0] {
+		case "-v", "--verbose":
+			if len(rest) > 1 {
+				return nil, fmt.Errorf("unexpected extra args in read-only git remote %v", rest)
 			}
+		case "show":
+			posCount := 0
+			for _, arg := range rest[1:] {
+				if arg == "-n" {
+					continue
+				}
+				if strings.HasPrefix(arg, "-") || strings.ContainsAny(arg, ":/\\") {
+					return nil, fmt.Errorf("arg %q not allowed in read-only git remote show", arg)
+				}
+				posCount++
+			}
+			if posCount > 1 {
+				return nil, errors.New("at most one remote name allowed in read-only git remote show")
+			}
+		case "get-url":
+			posCount := 0
+			for _, arg := range rest[1:] {
+				if arg == "--push" || arg == "--all" {
+					continue
+				}
+				if strings.HasPrefix(arg, "-") || strings.ContainsAny(arg, ":/\\") {
+					return nil, fmt.Errorf("arg %q not allowed in read-only git remote get-url", arg)
+				}
+				posCount++
+			}
+			if posCount != 1 {
+				return nil, errors.New("git remote get-url requires exactly one remote name")
+			}
+		default:
+			return nil, fmt.Errorf("git remote subcommand %q is not allowed (read-only only)", rest[0])
 		}
 	}
 	return append(append([]string{}, hardenedGitPrefix...), tokens...), nil

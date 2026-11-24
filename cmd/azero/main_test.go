@@ -237,3 +237,91 @@ func TestMetricsLoadsPluginDataAndTracePositionalArg(t *testing.T) {
 		t.Fatalf("expected cmdTrace positional arg exit 0, got %d", code)
 	}
 }
+
+func TestRegressionBugFixes(t *testing.T) {
+	// 1. Strict readonly git remote + branch -vv
+	for _, good := range []string{"remote", "remote -v", "remote show origin", "remote get-url origin", "branch -vv"} {
+		if _, err := search.ValidateReadonlyGitArgs(good); err != nil {
+			t.Fatalf("expected %q allowed, got %v", good, err)
+		}
+	}
+	for _, bad := range []string{"remote remove origin", "remote rm origin", "remote rename origin upstream", "remote set-url origin https://x", "remote prune origin"} {
+		if _, err := search.ValidateReadonlyGitArgs(bad); err == nil {
+			t.Fatalf("expected %q rejected", bad)
+		}
+	}
+
+	// 2. Search finds .github & dotfiles while skipping .git
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, ".github", "workflows"), 0o755)
+	_ = os.MkdirAll(filepath.Join(dir, ".git"), 0o755)
+	_ = os.WriteFile(filepath.Join(dir, ".github", "workflows", "ci.yml"), []byte("name: CI_MARKER\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".gitignore"), []byte("CI_MARKER_IGNORE\n"), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, ".git", "HEAD"), []byte("CI_MARKER_GIT\n"), 0o644)
+	qOut, err := search.Run(search.Options{
+		Cwd:     dir,
+		Queries: []search.Query{{Type: search.QueryText, Pattern: "CI_MARKER", CaseSensitive: true}},
+	})
+	if err != nil || !strings.Contains(qOut, ".github/workflows/ci.yml") || !strings.Contains(qOut, ".gitignore") || strings.Contains(qOut, ".git/HEAD") {
+		t.Fatalf("unexpected dotfile search result: err=%v\n%s", err, qOut)
+	}
+
+	// 3. Outline: TS single-line arrow, 4-space JSON, nested HTML <section>
+	tsSrc := "export const add = (a: number, b: number) => a + b;\nexport function realFn() {\n  return 1;\n}\n"
+	jsonSrc := "{\n    \"alpha\": {\n        \"nested\": 1\n    },\n    \"beta\": true\n}\n"
+	htmlSrc := "<section id=\"outer\">\n  <section id=\"inner\">\n  </section>\n</section>\n"
+	_ = os.WriteFile(filepath.Join(dir, "a.ts"), []byte(tsSrc), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "b.json"), []byte(jsonSrc), 0o644)
+	_ = os.WriteFile(filepath.Join(dir, "c.html"), []byte(htmlSrc), 0o644)
+	mOut, err := outline.Run(outline.Options{Cwd: dir, Paths: []string{"a.ts", "b.json", "c.html"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(mOut, "L1 fn add\n") || !strings.Contains(mOut, "L2-4 fn realFn") {
+		t.Fatalf("TS single-line arrow leaked into next fn:\n%s", mOut)
+	}
+	if !strings.Contains(mOut, "key alpha") || !strings.Contains(mOut, "key beta") {
+		t.Fatalf("4-space JSON keys missing:\n%s", mOut)
+	}
+	if !strings.Contains(mOut, "L1-4 <section> section") {
+		t.Fatalf("nested HTML section end line wrong:\n%s", mOut)
+	}
+
+	// 4. Patch rejects duplicate/mixed create + hunk on same path; allows indented === inside code
+	if _, err := patch.Parse("@@@+ dup.txt\nhi\n@@@ dup.txt\n<<<\nhi\n===\nbye\n>>>\n"); err == nil {
+		t.Fatalf("expected error when mixing @@@+ and @@@ on same file")
+	}
+	indentedFile := filepath.Join(dir, "ind.txt")
+	_ = os.WriteFile(indentedFile, []byte("header\n  ===\nfooter\n"), 0o644)
+	_, ok, _ := patch.Run(patch.Options{
+		Cwd:       dir,
+		PatchText: "@@@ ind.txt\n<<<\nheader\n  ===\n===\nHEADER\n  ===\n>>>\n",
+	})
+	if !ok {
+		t.Fatalf("expected indented === inside hunk to succeed")
+	}
+
+	// 5. Hook detects parent .git from subdirectory
+	sub := filepath.Join(dir, "packages", "web")
+	_ = os.MkdirAll(sub, 0o755)
+	subJSON, _ := json.Marshal(map[string]string{"cwd": sub})
+	var hBuf bytes.Buffer
+	hook.RunSessionStart(bytes.NewReader(subJSON), &hBuf)
+	if strings.TrimSpace(hBuf.String()) == "{}" {
+		t.Fatalf("expected SessionStart snapshot when inside subdirectory of .git repo")
+	}
+
+	// 6. Runner ParseCommandArg does not split lowercase env prefixes
+	sp1 := runner.ParseCommandArg("http_proxy=http://127.0.0.1:8080 curl https://example.com", 0)
+	if sp1.Name != "check-1" || !strings.HasPrefix(sp1.Command, "http_proxy=") {
+		t.Fatalf("unexpected parse for http_proxy: %+v", sp1)
+	}
+	sp2 := runner.ParseCommandArg("debug=1 npm test", 1)
+	if sp2.Name != "check-2" || sp2.Command != "debug=1 npm test" {
+		t.Fatalf("unexpected parse for debug=1: %+v", sp2)
+	}
+	sp3 := runner.ParseCommandArg("unit=go test ./...", 2)
+	if sp3.Name != "unit" || sp3.Command != "go test ./..." {
+		t.Fatalf("unexpected parse for labeled cmd: %+v", sp3)
+	}
+}

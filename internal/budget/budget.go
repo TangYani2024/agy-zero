@@ -152,7 +152,10 @@ func TruncateHeadTailUTF8(s string, maxBytes int) string {
 	if nl := strings.IndexByte(tail, '\n'); nl >= 0 && len(tail)-(nl+1) > tailBudget/2 {
 		tail = tail[nl+1:]
 	}
-	omitted := max(1, len(s)-len(head)-len(tail))
+	if len(head)+len(tail) >= len(s) {
+		return s
+	}
+	omitted := len(s) - len(head) - len(tail)
 	marker := fmt.Sprintf("\n... [folded %d middle bytes; total %d bytes] ...\n", omitted, len(s))
 	res := head + marker + tail
 	if len(res) > maxBytes {

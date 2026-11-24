@@ -329,7 +329,18 @@ func extractTSJS(lines []string) []Symbol {
 			} else if m := tsFuncRE.FindStringSubmatch(line); m != nil {
 				syms = append(syms, Symbol{"fn", m[1], i + 1, findBraceEnd(lines, i), 0})
 			} else if m := tsArrowRE.FindStringSubmatch(line); m != nil {
-				syms = append(syms, Symbol{"fn", m[1], i + 1, findBraceEnd(lines, i), 0})
+				end := i + 1
+				if idx := strings.Index(line, "=>"); idx >= 0 {
+					after := strings.TrimSpace(line[idx+2:])
+					if strings.HasPrefix(after, "{") {
+						end = findBraceEnd(lines, i)
+					} else if after == "" && i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "{") {
+						end = findBraceEnd(lines, i+1)
+					}
+				} else if strings.ContainsRune(line, '{') {
+					end = findBraceEnd(lines, i)
+				}
+				syms = append(syms, Symbol{"fn", m[1], i + 1, end, 0})
 			}
 		} else if i+1 <= classEnd {
 			if m := tsMethRE.FindStringSubmatch(line); m != nil && !control[m[1]] {
@@ -470,18 +481,42 @@ func extractShell(lines []string) []Symbol {
 	return syms
 }
 
-var jsonKeyRE = regexp.MustCompile(`^  "([^"]+)"\s*:`)
+var jsonKeyRE = regexp.MustCompile(`^([ \t]+)"([^"]+)"\s*:`)
 
 func extractJSON(lines []string) []Symbol {
-	var syms []Symbol
+	minIndent := -1
+	type cand struct {
+		indent int
+		key    string
+		idx    int
+	}
+	var cands []cand
 	for i, line := range lines {
 		if m := jsonKeyRE.FindStringSubmatch(line); m != nil {
-			end := i + 1
-			if strings.ContainsRune(line, '{') {
-				end = findBraceEnd(lines, i)
+			ind := 0
+			for _, ch := range m[1] {
+				if ch == '\t' {
+					ind += 4
+				} else {
+					ind++
+				}
 			}
-			syms = append(syms, Symbol{"key", m[1], i + 1, end, 0})
+			if minIndent < 0 || ind < minIndent {
+				minIndent = ind
+			}
+			cands = append(cands, cand{indent: ind, key: m[2], idx: i})
 		}
+	}
+	var syms []Symbol
+	for _, c := range cands {
+		if c.indent != minIndent {
+			continue
+		}
+		end := c.idx + 1
+		if strings.ContainsRune(lines[c.idx], '{') {
+			end = findBraceEnd(lines, c.idx)
+		}
+		syms = append(syms, Symbol{"key", c.key, c.idx + 1, end, 0})
 	}
 	return syms
 }
@@ -498,20 +533,31 @@ func extractYAML(lines []string) []Symbol {
 	return syms
 }
 
-var markupTagRE = regexp.MustCompile(`^<(template|script|style|section|main|header|footer|nav)\b[^>]*>`)
+var markupTagRE = regexp.MustCompile(`(?i)^<(template|script|style|section|main|header|footer|nav)\b[^>]*>`)
 
 func extractMarkup(lines []string) []Symbol {
 	var syms []Symbol
 	for i, line := range lines {
 		tr := strings.TrimSpace(line)
 		if m := markupTagRE.FindStringSubmatch(tr); m != nil {
-			tag := m[1]
+			tag := strings.ToLower(m[1])
 			end := i + 1
-			closeTag := "</" + tag + ">"
-			for j := i; j < len(lines); j++ {
-				if strings.Contains(lines[j], closeTag) {
-					end = j + 1
-					break
+			if !strings.HasSuffix(strings.TrimSpace(m[0]), "/>") {
+				openRE := regexp.MustCompile(`(?i)<` + tag + `\b[^>]*>`)
+				closeRE := regexp.MustCompile(`(?i)</` + tag + `\s*>`)
+				depth := 0
+				for j := i; j < len(lines); j++ {
+					opens := openRE.FindAllString(lines[j], -1)
+					for _, op := range opens {
+						if !strings.HasSuffix(strings.TrimSpace(op), "/>") {
+							depth++
+						}
+					}
+					depth -= len(closeRE.FindAllString(lines[j], -1))
+					if depth <= 0 {
+						end = j + 1
+						break
+					}
 				}
 			}
 			syms = append(syms, Symbol{"<" + tag + ">", tag, i + 1, end, 0})

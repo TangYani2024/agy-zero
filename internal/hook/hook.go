@@ -43,7 +43,8 @@ type hookSystemMessage struct {
 }
 
 var repoMarkers = []string{
-	".git", "package.json", "go.mod", "Cargo.toml", "pyproject.toml",
+	".git", "package.json", "go.mod", "go.work", "Cargo.toml", "pyproject.toml",
+	"requirements.txt", "setup.py", "composer.json", "Gemfile", "mix.exs", "flake.nix",
 	"pom.xml", "build.gradle", "build.gradle.kts", "Makefile", "CMakeLists.txt",
 }
 
@@ -83,6 +84,21 @@ func isHomeOrSystemRoot(dir string) bool {
 func hasRepoMarker(dir string) bool {
 	for _, m := range repoMarkers {
 		if _, err := os.Stat(filepath.Join(dir, m)); err == nil {
+			return true
+		}
+	}
+	// Also walk upward for .git when launched from a repo subdirectory (stopping before home/root).
+	cur, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	for depth := 0; depth < 8; depth++ {
+		parent := filepath.Dir(cur)
+		if parent == cur || isHomeOrSystemRoot(parent) {
+			break
+		}
+		cur = parent
+		if _, err := os.Stat(filepath.Join(cur, ".git")); err == nil {
 			return true
 		}
 	}
@@ -199,7 +215,7 @@ func runFastGit(ws string, args ...string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return strings.TrimSpace(string(out)), true
+	return strings.TrimRight(string(out), "\r\n"), true
 }
 
 func gitSummary(ws string) string {
@@ -361,7 +377,7 @@ func twoLevelTree(ws string) string {
 }
 
 // Experimental opt-in PostToolUse spill condenser (returns {} unless AZERO_POST_TOOL_CONDENSE=1).
-var spillFileRE = regexp.MustCompile(`file://([^\s"']+/output\.txt)|saved to:\s*([^\s"']+/output\.txt)`)
+var spillFileRE = regexp.MustCompile(`file://([^\s"']+[/\\]output\.txt)|saved to:\s*([^\s"']+[/\\]output\.txt)`)
 
 type postToolInput struct {
 	Result string `json:"result"`
@@ -401,8 +417,8 @@ func RunPostTool(stdin io.Reader, stdout io.Writer) {
 	if in.Error != "" {
 		exitCode = 1
 	}
-	condensed := budget.CompactCommandOutput(string(full), "", exitCode, false, "", 7200)
-	condensed += fmt.Sprintf("\n[agy-zero condensed %dB -> %dB from %s]", len(full), len(condensed), outPath)
+	footer := fmt.Sprintf("\n[agy-zero condensed %dB from %s]", len(full), outPath)
+	condensed := budget.CompactCommandOutput(string(full), "", exitCode, false, "", max(400, 7200-len(footer))) + footer
 	enc, err := json.Marshal(map[string]string{"overwriteResult": condensed})
 	if err != nil {
 		_, _ = io.WriteString(stdout, "{}\n")

@@ -109,13 +109,10 @@ func AnalyzeFile(path string) (SessionReport, error) {
 			userBetween = true
 			continue
 		}
-		if s.Type == "GENERIC" {
+		if s.Type != "PLANNER_RESPONSE" {
 			if strings.Contains(s.Content, "output.txt") && (strings.Contains(s.Content, "truncated") || strings.Contains(s.Content, "saved to")) {
 				rep.SpillCount++
 			}
-			continue
-		}
-		if s.Type != "PLANNER_RESPONSE" {
 			continue
 		}
 
@@ -164,7 +161,11 @@ func AnalyzeFile(path string) (SessionReport, error) {
 				rep.ReadFileCalls++
 			}
 		}
-		prevTools = fmt.Sprintf("%d×[%s]", len(names), strings.Join(names[:min(len(names), 3)], ","))
+		if len(names) == 0 {
+			prevTools = "user input"
+		} else {
+			prevTools = fmt.Sprintf("%d×[%s]", len(names), strings.Join(names[:min(len(names), 3)], ","))
+		}
 	}
 	return rep, nil
 }
@@ -183,7 +184,7 @@ func FormatReport(reports []SessionReport, maxBytes int) string {
 		}
 		fmt.Fprintf(&b, "# agy-zero Transcript X-Ray\nFile: %s\n", r.Path)
 		fmt.Fprintf(&b, "- Turns: %d | Tool calls: %d (multi-tool turns: %d, read_file: %d)\n", r.Turns, r.ToolCalls, r.MultiToolTurns, r.ReadFileCalls)
-		fmt.Fprintf(&b, "- Turn-1 fixed prefix: %d tok | Peak context: %d tok\n", r.Turn1Input, r.MaxContext)
+		fmt.Fprintf(&b, "- Turn-1 total input: %d tok | Peak context: %d tok\n", r.Turn1Input, r.MaxContext)
 		fmt.Fprintf(&b, "- Tokens: uncached_in=%d, cache_read=%d (avg hit %.1f%%), out=%d\n", r.TotalUncachedIn, r.TotalCacheRead, hitPct, r.TotalOut)
 		fmt.Fprintf(&b, "- Bottlenecks: full_cache_misses(>25k)=%d | >60s_gaps=%d | output.txt_spills=%d\n", r.CacheMissSpikes, r.Over60sGaps, r.SpillCount)
 		if r.BiggestCtxJump > 0 {

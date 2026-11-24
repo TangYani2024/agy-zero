@@ -20,7 +20,7 @@ import (
 	"agy-zero/internal/trace"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 type stringList []string
 

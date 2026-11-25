@@ -192,7 +192,10 @@ func BuildSnapshot(ws string) string {
 	}()
 	wg.Wait()
 
-	parts := []string{fmt.Sprintf("[agy-zero snapshot] Workspace: %s", ws)}
+	parts := []string{
+		fmt.Sprintf("[agy-zero snapshot] Workspace: %s", ws),
+		"Fast CLI: `azero q -t/-f/--git` (batch search/git) | `azero map <files>` (>300L outline) | `azero patch` (multi-edit) | `azero run -- \"c1\" \"c2\"`",
+	}
 	if gitPart != "" {
 		parts = append(parts, gitPart)
 	}

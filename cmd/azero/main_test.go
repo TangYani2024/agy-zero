@@ -159,6 +159,9 @@ func TestSessionStartConditionalGate(t *testing.T) {
 	if _, has := parsed["injectSteps"]; !has {
 		t.Fatalf("expected injectSteps for repo dir, got %s", buf.String())
 	}
+	if !strings.Contains(buf.String(), "Fast CLI: `azero q") {
+		t.Fatalf("expected azero CLI routing tip in snapshot, got %s", buf.String())
+	}
 }
 
 func TestMetricsRecordingAndStats(t *testing.T) {
